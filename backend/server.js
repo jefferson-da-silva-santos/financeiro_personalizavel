@@ -8,7 +8,7 @@ const { randomUUID } = require('crypto');
 
 // ─── Configuração ───────────────────────────────────────────────────────────
 
-const PORT = process.env.PORT || 3456;
+const PORT = 3004;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'database.db');
 
 const app = express();
