@@ -100,16 +100,19 @@ function daysUntil(dateStr) {
   return Math.round((due - today) / 86400000);
 }
 
-// ─── Custom Bar Chart ──────────────────────────────────────────────────────────
-function DistributionChart({ categories, transactions }) {
+// ─── Pie Chart ─────────────────────────────────────────────────────────────────
+function PieChart({ categories, transactions }) {
   const paid = transactions.filter(t => t.paid);
   const total = paid.reduce((s, t) => s + t.amount, 0);
 
   const byCategory = {};
   for (const cat of categories) byCategory[cat.id] = 0;
+  let uncategorized = 0;
   for (const tx of paid) {
     if (tx.category_id && byCategory[tx.category_id] !== undefined) {
       byCategory[tx.category_id] += tx.amount;
+    } else {
+      uncategorized += tx.amount;
     }
   }
 
@@ -117,76 +120,149 @@ function DistributionChart({ categories, transactions }) {
     return <div className="empty-state"><div className="empty-icon">📊</div><div className="empty-text">Nenhuma categoria configurada</div></div>;
   }
 
+  if (total === 0) {
+    return <div className="empty-state"><div className="empty-icon">📊</div><div className="empty-text">Nenhuma despesa paga registrada</div></div>;
+  }
+
+  // Build slices
+  const slices = categories.map((cat, i) => ({
+    label: cat.name,
+    value: byCategory[cat.id] || 0,
+    color: CAT_COLORS[i % CAT_COLORS.length],
+  })).filter(s => s.value > 0);
+
+  if (uncategorized > 0) {
+    slices.push({ label: 'Sem categoria', value: uncategorized, color: '#64748b' });
+  }
+
+  // SVG pie
+  const size = 180;
+  const cx = size / 2;
+  const cy = size / 2;
+  const r = 68;
+  const innerR = 40;
+
+  let startAngle = -Math.PI / 2;
+  const paths = slices.map(slice => {
+    const pct = slice.value / total;
+    const angle = pct * 2 * Math.PI;
+    const endAngle = startAngle + angle;
+
+    const x1 = cx + r * Math.cos(startAngle);
+    const y1 = cy + r * Math.sin(startAngle);
+    const x2 = cx + r * Math.cos(endAngle);
+    const y2 = cy + r * Math.sin(endAngle);
+    const ix1 = cx + innerR * Math.cos(endAngle);
+    const iy1 = cy + innerR * Math.sin(endAngle);
+    const ix2 = cx + innerR * Math.cos(startAngle);
+    const iy2 = cy + innerR * Math.sin(startAngle);
+
+    const largeArc = angle > Math.PI ? 1 : 0;
+    const d = [
+      `M ${x1} ${y1}`,
+      `A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2}`,
+      `L ${ix1} ${iy1}`,
+      `A ${innerR} ${innerR} 0 ${largeArc} 0 ${ix2} ${iy2}`,
+      'Z'
+    ].join(' ');
+
+    const midAngle = startAngle + angle / 2;
+    startAngle = endAngle;
+
+    return { ...slice, d, pct, midAngle };
+  });
+
+  const [hovered, setHovered] = useState(null);
+
   return (
-    <div className="bar-chart-container">
-      {categories.map((cat, i) => {
-        const spent = byCategory[cat.id] || 0;
-        const pct = total > 0 ? (spent / total) * 100 : 0;
-        return (
-          <div key={cat.id} className="bar-chart-item">
-            <div className="bar-chart-header">
-              <div className="flex gap-2" style={{ alignItems: 'center' }}>
-                <span className="cat-dot" style={{ background: CAT_COLORS[i % CAT_COLORS.length] }} />
-                <span className="bar-chart-label">{cat.name}</span>
-              </div>
-              <span className="bar-chart-value">{formatCurrency(spent)} · {pct.toFixed(1)}%</span>
-            </div>
-            <div className="bar-track">
-              <div
-                className="bar-fill"
-                style={{
-                  width: `${Math.min(pct, 100)}%`,
-                  background: `linear-gradient(90deg, ${CAT_COLORS[i % CAT_COLORS.length]}cc, ${CAT_COLORS[i % CAT_COLORS.length]})`,
-                }}
-              />
-            </div>
+    <div className="pie-chart-container">
+      <div className="pie-svg-wrap">
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+          {paths.map((p, i) => (
+            <path
+              key={i}
+              d={p.d}
+              fill={p.color}
+              opacity={hovered === null || hovered === i ? 1 : 0.4}
+              stroke="var(--bg-card)"
+              strokeWidth="2"
+              style={{ cursor: 'pointer', transition: 'opacity 0.2s' }}
+              onMouseEnter={() => setHovered(i)}
+              onMouseLeave={() => setHovered(null)}
+            />
+          ))}
+          {/* Center text */}
+          <text x={cx} y={cy - 8} textAnchor="middle" fontSize="11" fill="var(--text-muted)" fontFamily="DM Sans">
+            {hovered !== null ? paths[hovered].label : 'Total'}
+          </text>
+          <text x={cx} y={cy + 10} textAnchor="middle" fontSize="10" fill="var(--text-primary)" fontWeight="700" fontFamily="DM Mono">
+            {hovered !== null
+              ? formatCurrency(paths[hovered].value)
+              : formatCurrency(total)}
+          </text>
+          {hovered !== null && (
+            <text x={cx} y={cy + 24} textAnchor="middle" fontSize="9" fill="var(--text-muted)" fontFamily="DM Mono">
+              {(paths[hovered].pct * 100).toFixed(1)}%
+            </text>
+          )}
+        </svg>
+      </div>
+      <div className="pie-legend">
+        {paths.map((p, i) => (
+          <div
+            key={i}
+            className={`pie-legend-item ${hovered === i ? 'active' : ''}`}
+            onMouseEnter={() => setHovered(i)}
+            onMouseLeave={() => setHovered(null)}
+          >
+            <span className="cat-dot" style={{ background: p.color, width: 10, height: 10 }} />
+            <span className="pie-legend-label">{p.label}</span>
+            <span className="pie-legend-value">{(p.pct * 100).toFixed(1)}%</span>
           </div>
-        );
-      })}
+        ))}
+      </div>
     </div>
   );
 }
 
-// ─── Comparison Chart ──────────────────────────────────────────────────────────
+// ─── Comparison Chart (single bar per category) ────────────────────────────────
 function ComparisonChart({ summary }) {
   if (!summary || !summary.categoryBreakdown?.length) {
     return <div className="empty-state"><div className="empty-icon">📈</div><div className="empty-text">Sem dados para comparar</div></div>;
   }
 
   const { categoryBreakdown } = summary;
-  const maxVal = Math.max(...categoryBreakdown.flatMap(c => [c.planned_amount, c.spent_amount]), 1);
 
   return (
-    <div className="comparison-chart">
-      <div className="comp-legend">
-        <div className="legend-item"><div className="legend-dot comp-bar-planned" /><span>Planejado</span></div>
-        <div className="legend-item"><div className="legend-dot comp-bar-spent" /><span>Realizado</span></div>
-      </div>
+    <div className="comparison-chart-v2">
       {categoryBreakdown.map((cat, i) => {
-        const planW = (cat.planned_amount / maxVal) * 100;
-        const spentW = (cat.spent_amount / maxVal) * 100;
         const over = cat.spent_amount > cat.planned_amount;
+        const pct = cat.planned_amount > 0
+          ? Math.min((cat.spent_amount / cat.planned_amount) * 100, 100)
+          : 0;
         return (
-          <div key={cat.id} className="comparison-item">
-            <div className="comparison-label">{cat.name}</div>
-            <div className="comparison-bars">
-              <div className="comp-bar-row">
-                <div className="comp-bar-track">
-                  <div className="comp-bar-fill comp-bar-planned" style={{ width: `${planW}%` }} />
-                </div>
-                <span className="comp-bar-label">{formatCurrency(cat.planned_amount)}</span>
+          <div key={cat.id} className="comp-v2-item">
+            <div className="comp-v2-label">
+              <span className="cat-dot" style={{ background: CAT_COLORS[i % CAT_COLORS.length] }} />
+              <span>{cat.name}</span>
+            </div>
+            <div className="comp-v2-bar-wrap">
+              <div className="comp-v2-track">
+                <div
+                  className={`comp-v2-fill ${over ? 'over' : ''}`}
+                  style={{
+                    width: `${pct}%`,
+                    background: over
+                      ? 'linear-gradient(90deg, var(--danger), #f97316)'
+                      : `linear-gradient(90deg, ${CAT_COLORS[i % CAT_COLORS.length]}cc, ${CAT_COLORS[i % CAT_COLORS.length]})`,
+                  }}
+                />
               </div>
-              <div className="comp-bar-row">
-                <div className="comp-bar-track">
-                  <div
-                    className={`comp-bar-fill ${over ? 'comp-bar-over' : 'comp-bar-spent'}`}
-                    style={{ width: `${Math.min(spentW, 100)}%` }}
-                  />
-                </div>
-                <span className="comp-bar-label" style={{ color: over ? 'var(--danger)' : undefined }}>
-                  {formatCurrency(cat.spent_amount)}
-                </span>
-              </div>
+              <span className="comp-v2-values" style={{ color: over ? 'var(--danger)' : 'var(--text-muted)' }}>
+                {formatCurrency(cat.spent_amount)}
+                <span className="comp-v2-sep">/</span>
+                {formatCurrency(cat.planned_amount)}
+              </span>
             </div>
           </div>
         );
@@ -266,15 +342,25 @@ function CategoryEditor({ monthId, initialCategories, onSaved }) {
   );
 }
 
-// ─── Transaction Modal ─────────────────────────────────────────────────────────
-function TransactionModal({ year, month, categories, onClose, onSaved }) {
-  const [form, setForm] = useState({
+// ─── Transaction Modal (create + edit) ────────────────────────────────────────
+function TransactionModal({ year, month, categories, onClose, onSaved, editData }) {
+  const [form, setForm] = useState(editData ? {
+    description: editData.description || '',
+    amount: editData.amount || '',
+    payment_method: editData.payment_method || 'Pix',
+    payment_type: editData.payment_type || 'avista',
+    category_id: editData.category_id || '',
+    due_date: editData.due_date || '',
+    paid: !!editData.paid,
+    installments: 2,
+  } : {
     description: '', amount: '', payment_method: 'Pix',
     payment_type: 'avista', category_id: '', due_date: '',
     paid: false, installments: 2,
   });
   const [saving, setSaving] = useState(false);
   const toast = useToast();
+  const isEdit = !!editData;
 
   function setField(k, v) { setForm(f => ({ ...f, [k]: v })); }
 
@@ -283,23 +369,36 @@ function TransactionModal({ year, month, categories, onClose, onSaved }) {
     if (!form.amount || parseFloat(form.amount) <= 0) { toast('Informe um valor válido', 'error'); return; }
     setSaving(true);
     try {
-      await api.post('/transactions', {
-        year, month,
-        description: form.description.trim(),
-        amount: parseFloat(form.amount),
-        payment_method: form.payment_method,
-        payment_type: form.payment_type,
-        category_id: form.category_id ? parseInt(form.category_id) : null,
-        due_date: form.due_date,
-        paid: form.paid,
-        installments: form.payment_type === 'parcelado' ? form.installments : 1,
-      });
-      toast(
-        form.payment_type === 'parcelado'
-          ? `${form.installments} parcelas criadas!`
-          : 'Despesa registrada!',
-        'success'
-      );
+      if (isEdit) {
+        await api.patch(`/transactions/${editData.id}`, {
+          description: form.description.trim(),
+          amount: parseFloat(form.amount),
+          payment_method: form.payment_method,
+          payment_type: form.payment_type,
+          category_id: form.category_id ? parseInt(form.category_id) : null,
+          due_date: form.due_date,
+          paid: form.paid,
+        });
+        toast('Despesa atualizada!', 'success');
+      } else {
+        await api.post('/transactions', {
+          year, month,
+          description: form.description.trim(),
+          amount: parseFloat(form.amount),
+          payment_method: form.payment_method,
+          payment_type: form.payment_type,
+          category_id: form.category_id ? parseInt(form.category_id) : null,
+          due_date: form.due_date,
+          paid: form.paid,
+          installments: form.payment_type === 'parcelado' ? form.installments : 1,
+        });
+        toast(
+          form.payment_type === 'parcelado'
+            ? `${form.installments} parcelas criadas!`
+            : 'Despesa registrada!',
+          'success'
+        );
+      }
       onSaved();
     } catch (err) {
       toast(err.message, 'error');
@@ -310,7 +409,7 @@ function TransactionModal({ year, month, categories, onClose, onSaved }) {
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal">
         <div className="modal-header">
-          <span className="modal-title">📋 Nova Despesa</span>
+          <span className="modal-title">{isEdit ? '✏️ Editar Despesa' : '📋 Nova Despesa'}</span>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         <div className="modal-body">
@@ -329,14 +428,16 @@ function TransactionModal({ year, month, categories, onClose, onSaved }) {
                 {PAYMENT_METHODS.map(m => <option key={m}>{m}</option>)}
               </select>
             </div>
-            <div className="form-group">
-              <label>Tipo</label>
-              <select value={form.payment_type} onChange={e => setField('payment_type', e.target.value)}>
-                <option value="avista">À Vista</option>
-                <option value="parcelado">Parcelado</option>
-              </select>
-            </div>
-            {form.payment_type === 'parcelado' && (
+            {!isEdit && (
+              <div className="form-group">
+                <label>Tipo</label>
+                <select value={form.payment_type} onChange={e => setField('payment_type', e.target.value)}>
+                  <option value="avista">À Vista</option>
+                  <option value="parcelado">Parcelado</option>
+                </select>
+              </div>
+            )}
+            {!isEdit && form.payment_type === 'parcelado' && (
               <div className="form-group">
                 <label>Nº de Parcelas</label>
                 <input type="number" min="2" max="60" value={form.installments} onChange={e => setField('installments', parseInt(e.target.value) || 2)} />
@@ -364,7 +465,7 @@ function TransactionModal({ year, month, categories, onClose, onSaved }) {
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>Cancelar</button>
           <button className="btn btn-primary" onClick={submit} disabled={saving}>
-            {saving ? 'Salvando...' : form.payment_type === 'parcelado' ? `Criar ${form.installments} parcelas` : 'Salvar Despesa'}
+            {saving ? 'Salvando...' : isEdit ? 'Salvar Alterações' : form.payment_type === 'parcelado' ? `Criar ${form.installments} parcelas` : 'Salvar Despesa'}
           </button>
         </div>
       </div>
@@ -372,11 +473,16 @@ function TransactionModal({ year, month, categories, onClose, onSaved }) {
   );
 }
 
-// ─── Income Modal ──────────────────────────────────────────────────────────────
-function IncomeModal({ year, month, onClose, onSaved }) {
-  const [form, setForm] = useState({ description: '', amount: '', received: false });
+// ─── Income Modal (create + edit) ─────────────────────────────────────────────
+function IncomeModal({ year, month, onClose, onSaved, editData }) {
+  const [form, setForm] = useState(editData ? {
+    description: editData.description || '',
+    amount: editData.amount || '',
+    received: !!editData.received,
+  } : { description: '', amount: '', received: false });
   const [saving, setSaving] = useState(false);
   const toast = useToast();
+  const isEdit = !!editData;
 
   function setField(k, v) { setForm(f => ({ ...f, [k]: v })); }
 
@@ -385,13 +491,22 @@ function IncomeModal({ year, month, onClose, onSaved }) {
     if (!form.amount || parseFloat(form.amount) <= 0) { toast('Informe um valor válido', 'error'); return; }
     setSaving(true);
     try {
-      await api.post('/incomes', {
-        year, month,
-        description: form.description.trim(),
-        amount: parseFloat(form.amount),
-        received: form.received,
-      });
-      toast('Entrada registrada!', 'success');
+      if (isEdit) {
+        await api.patch(`/incomes/${editData.id}`, {
+          description: form.description.trim(),
+          amount: parseFloat(form.amount),
+          received: form.received,
+        });
+        toast('Entrada atualizada!', 'success');
+      } else {
+        await api.post('/incomes', {
+          year, month,
+          description: form.description.trim(),
+          amount: parseFloat(form.amount),
+          received: form.received,
+        });
+        toast('Entrada registrada!', 'success');
+      }
       onSaved();
     } catch (err) {
       toast(err.message, 'error');
@@ -402,7 +517,7 @@ function IncomeModal({ year, month, onClose, onSaved }) {
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal">
         <div className="modal-header">
-          <span className="modal-title">💰 Nova Entrada</span>
+          <span className="modal-title">{isEdit ? '✏️ Editar Entrada' : '💰 Nova Entrada'}</span>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         <div className="modal-body">
@@ -426,7 +541,7 @@ function IncomeModal({ year, month, onClose, onSaved }) {
         <div className="modal-footer">
           <button className="btn btn-secondary" onClick={onClose}>Cancelar</button>
           <button className="btn btn-success" onClick={submit} disabled={saving}>
-            {saving ? 'Salvando...' : 'Salvar Entrada'}
+            {saving ? 'Salvando...' : isEdit ? 'Salvar Alterações' : 'Salvar Entrada'}
           </button>
         </div>
       </div>
@@ -459,7 +574,7 @@ function CategoryModal({ monthId, categories, onClose, onSaved }) {
 }
 
 // ─── Transactions Table ────────────────────────────────────────────────────────
-function TransactionsTable({ transactions, categories, onTogglePaid, onDelete }) {
+function TransactionsTable({ transactions, categories, onTogglePaid, onDelete, onEdit }) {
   const toast = useToast();
 
   async function togglePaid(tx) {
@@ -553,7 +668,10 @@ function TransactionsTable({ transactions, categories, onTogglePaid, onDelete })
                   <span className="badge badge-muted">{tx.payment_method || '—'}</span>
                 </td>
                 <td>
-                  <button className="btn btn-danger btn-icon btn-sm" onClick={() => del(tx)} title="Excluir">✕</button>
+                  <div className="row-actions">
+                    <button className="btn btn-edit btn-icon btn-sm" onClick={() => onEdit(tx)} title="Editar">✏️</button>
+                    <button className="btn btn-danger btn-icon btn-sm" onClick={() => del(tx)} title="Excluir">✕</button>
+                  </div>
                 </td>
               </tr>
             );
@@ -565,7 +683,7 @@ function TransactionsTable({ transactions, categories, onTogglePaid, onDelete })
 }
 
 // ─── Incomes Table ─────────────────────────────────────────────────────────────
-function IncomesTable({ incomes, onToggle, onDelete }) {
+function IncomesTable({ incomes, onToggle, onDelete, onEdit }) {
   const toast = useToast();
 
   async function toggle(inc) {
@@ -589,10 +707,10 @@ function IncomesTable({ incomes, onToggle, onDelete }) {
 
   return (
     <div className="table-wrap">
-      <table>
+      <table className="incomes-table">
         <thead>
           <tr>
-            <th>Recebido</th>
+            <th className="col-received">Recebido</th>
             <th>Descrição</th>
             <th>Valor</th>
             <th></th>
@@ -601,7 +719,7 @@ function IncomesTable({ incomes, onToggle, onDelete }) {
         <tbody>
           {incomes.map(inc => (
             <tr key={inc.id}>
-              <td>
+              <td className="col-received">
                 <button
                   className={`paid-toggle ${inc.received ? 'active' : ''}`}
                   onClick={() => toggle(inc)}
@@ -611,7 +729,10 @@ function IncomesTable({ incomes, onToggle, onDelete }) {
               <td style={{ fontWeight: 500 }}>{inc.description}</td>
               <td className="td-mono" style={{ fontWeight: 600, color: 'var(--success)' }}>{formatCurrency(inc.amount)}</td>
               <td>
-                <button className="btn btn-danger btn-icon btn-sm" onClick={() => del(inc)}>✕</button>
+                <div className="row-actions">
+                  <button className="btn btn-edit btn-icon btn-sm" onClick={() => onEdit(inc)} title="Editar">✏️</button>
+                  <button className="btn btn-danger btn-icon btn-sm" onClick={() => del(inc)}>✕</button>
+                </div>
               </td>
             </tr>
           ))}
@@ -704,6 +825,8 @@ function MonthView({ year, month, darkMode, toggleTheme }) {
   const [showTxModal, setShowTxModal] = useState(false);
   const [showIncModal, setShowIncModal] = useState(false);
   const [showCatModal, setShowCatModal] = useState(false);
+  const [editTx, setEditTx] = useState(null);
+  const [editInc, setEditInc] = useState(null);
   const toast = useToast();
 
   const load = useCallback(async () => {
@@ -762,12 +885,12 @@ function MonthView({ year, month, darkMode, toggleTheme }) {
             <KpiStrip summary={summary} />
 
             <div className="dashboard-grid">
-              {/* Distribution Chart */}
+              {/* Pie Chart */}
               <div className="card">
                 <div className="card-header">
                   <span className="card-title">📊 Distribuição por Categoria</span>
                 </div>
-                <DistributionChart categories={categories} transactions={transactions} />
+                <PieChart categories={categories} transactions={transactions} />
               </div>
 
               {/* Upcoming Bills */}
@@ -851,6 +974,7 @@ function MonthView({ year, month, darkMode, toggleTheme }) {
               categories={categories}
               onTogglePaid={load}
               onDelete={load}
+              onEdit={tx => setEditTx(tx)}
             />
           </div>
         )}
@@ -862,7 +986,7 @@ function MonthView({ year, month, darkMode, toggleTheme }) {
               <span className="card-title">💰 Entradas do Mês</span>
               <button className="btn btn-success btn-sm" onClick={() => setShowIncModal(true)}>＋ Nova</button>
             </div>
-            <IncomesTable incomes={incomes} onToggle={load} onDelete={load} />
+            <IncomesTable incomes={incomes} onToggle={load} onDelete={load} onEdit={inc => setEditInc(inc)} />
           </div>
         )}
       </div>
@@ -875,11 +999,27 @@ function MonthView({ year, month, darkMode, toggleTheme }) {
           onSaved={() => { setShowTxModal(false); load(); }}
         />
       )}
+      {editTx && (
+        <TransactionModal
+          year={year} month={month} categories={categories}
+          editData={editTx}
+          onClose={() => setEditTx(null)}
+          onSaved={() => { setEditTx(null); load(); }}
+        />
+      )}
       {showIncModal && (
         <IncomeModal
           year={year} month={month}
           onClose={() => setShowIncModal(false)}
           onSaved={() => { setShowIncModal(false); load(); }}
+        />
+      )}
+      {editInc && (
+        <IncomeModal
+          year={year} month={month}
+          editData={editInc}
+          onClose={() => setEditInc(null)}
+          onSaved={() => { setEditInc(null); load(); }}
         />
       )}
       {showCatModal && (
