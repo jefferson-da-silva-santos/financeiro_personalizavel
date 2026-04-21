@@ -482,6 +482,7 @@ input, select, textarea { font-family: inherit; }
   display: flex;
   gap: 6px;
   align-items: center;
+  justify-content: flex-end;
 }
 
 .btn-icon {
